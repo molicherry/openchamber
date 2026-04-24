@@ -209,49 +209,18 @@ docker compose up -d
 
 Available at `http://localhost:3000`.
 
+This Docker image is a slim runtime build. It does **not** include the bundled Cloudflare tunnel binary; use a reverse proxy or run Cloudflare tooling separately if you need remote access.
+
 **UI Password:**
 ```yaml
 environment:
   UI_PASSWORD: your_secure_password
 ```
 
-**Cloudflare Tunnel (optional):**
-```yaml
-environment:
-  OPENCHAMBER_TUNNEL_MODE: quick # quick | managed-remote | managed-local
-  OPENCHAMBER_TUNNEL_PROVIDER: cloudflare
-```
-
-For `managed-remote` mode, provide:
-
-```yaml
-environment:
-  OPENCHAMBER_TUNNEL_MODE: managed-remote
-  OPENCHAMBER_TUNNEL_HOSTNAME: app.example.com
-  OPENCHAMBER_TUNNEL_TOKEN: <token>
-```
-
-For `managed-local` mode, optionally provide:
-
-```yaml
-environment:
-  OPENCHAMBER_TUNNEL_MODE: managed-local
-  OPENCHAMBER_TUNNEL_CONFIG: /home/openchamber/.cloudflared/config.yml
-```
-
-Managed-local path note: `OPENCHAMBER_TUNNEL_CONFIG` must point to a path inside the container user home (`/home/openchamber/...`). If your Cloudflare config references a credentials JSON file, that file path must also be accessible inside the container (mount with `volumes`).
-
 ### Reverse proxy notes
 
 - For a complete reverse proxy setup guide, see [`docs/REVERSE_PROXY.md`](./docs/REVERSE_PROXY.md).
 - Website docs source lives at `packages/docs/content/docs/reverse-proxy.mdx`.
-
-### Tunnel behavior notes
-
-- OpenChamber supports one active tunnel per running instance (port).
-- Starting a tunnel with a different mode/provider on the same instance replaces the current tunnel.
-- Replacing or stopping a tunnel revokes existing connect links and invalidates remote tunnel sessions for that instance.
-- Connect links are one-time tokens; generating a new link revokes the previous unused link.
 
 **Data Directory Permission Note:** The `data/` directory is mounted into the container for persistent storage (config, sessions, SSH keys, workspaces). Before running, ensure the directory exists and has proper permissions:
 
