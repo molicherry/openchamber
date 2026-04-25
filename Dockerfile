@@ -48,6 +48,7 @@ ENV NODE_ENV=production
 
 COPY scripts/docker-entrypoint.sh /home/openchamber/openchamber-entrypoint.sh
 
+COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages/web/node_modules ./packages/web/node_modules
 
 # Copy files from build context (pre-built locally)

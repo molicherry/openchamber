@@ -59,6 +59,7 @@ RUN npm config set prefix /home/openchamber/.npm-global && mkdir -p /home/opench
 
 COPY scripts/docker-entrypoint.sh /home/openchamber/openchamber-entrypoint.sh
 
+COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/packages/web/node_modules ./packages/web/node_modules
 
 COPY --from=build /app/package.json ./package.json
