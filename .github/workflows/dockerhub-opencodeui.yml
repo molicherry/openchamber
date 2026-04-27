@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  IMAGE_NAME: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/opencodeui
+  IMAGE_NAME: docker.io/${{ secrets.DOCKER_USERNAME }}/opencodeui
 
 jobs:
   publish:
@@ -47,8 +47,8 @@ jobs:
         if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.push_image) }}
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Build and publish image
         uses: docker/build-push-action@v6
