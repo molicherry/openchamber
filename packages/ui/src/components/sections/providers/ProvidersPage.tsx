@@ -20,6 +20,7 @@ import { copyTextToClipboard } from '@/lib/clipboard';
 import { openExternalUrl } from '@/lib/url';
 import type { ModelMetadata } from '@/types';
 import { useI18n } from '@/lib/i18n';
+import { opencodeClient } from '@/lib/opencode/client';
 
 const COMPACT_NUMBER_FORMATTER = new Intl.NumberFormat('en-US', {
   notation: 'compact',
@@ -166,6 +167,8 @@ export const ProvidersPage: React.FC = () => {
   const [providerDropdownOpen, setProviderDropdownOpen] = React.useState(false);
   const [providerSources, setProviderSources] = React.useState<Record<string, ProviderSources>>({});
   const [showAuthPanel, setShowAuthPanel] = React.useState(false);
+  const [baseURLInputs, setBaseURLInputs] = React.useState<Record<string, string>>({});
+  const [baseURLBusyKey, setBaseURLBusyKey] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     if (!selectedProviderId && providers.length > 0) {
@@ -324,6 +327,18 @@ export const ProvidersPage: React.FC = () => {
 
   const selectedProvider = providers.find((provider) => provider.id === selectedProviderId);
   const selectedSources = selectedProviderId ? providerSources[selectedProviderId] : undefined;
+
+  // Load current baseURL from provider options when selected provider changes
+  React.useEffect(() => {
+    if (!selectedProvider) return;
+    const current = selectedProvider.options?.baseURL;
+    setBaseURLInputs((prev) => ({
+      ...prev,
+      [selectedProvider.id]: typeof current === 'string' ? current : '',
+    }));
+    // Only respond to provider id change, not options reference changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProvider?.id]);
 
   const handleSaveApiKey = async (providerId: string) => {
     const apiKey = apiKeyInputs[providerId]?.trim() ?? '';
@@ -502,6 +517,40 @@ export const ProvidersPage: React.FC = () => {
       toast.error(t('settings.providers.page.toast.providerDisconnectFailed'));
     } finally {
       setAuthBusyKey(null);
+    }
+  };
+
+  const handleSaveBaseURL = async (providerId: string) => {
+    const value = baseURLInputs[providerId]?.trim() ?? '';
+    const busyKey = `baseURL:${providerId}`;
+    setBaseURLBusyKey(busyKey);
+
+    try {
+      await opencodeClient.updateConfigPartial((config) => {
+        const updated = { ...config };
+        if (!updated.provider) updated.provider = {};
+        if (!updated.provider[providerId]) updated.provider[providerId] = {};
+        if (!updated.provider[providerId].options) updated.provider[providerId].options = {};
+
+        if (value) {
+          updated.provider[providerId].options.baseURL = value;
+        } else {
+          delete updated.provider[providerId].options.baseURL;
+        }
+
+        return updated;
+      });
+
+      toast.success(value
+        ? t('settings.providers.page.endpoint.baseURL.saved')
+        : t('settings.providers.page.endpoint.baseURL.cleared')
+      );
+      await reloadOpenCodeConfiguration({ scopes: ["providers"], mode: "active" });
+    } catch (error) {
+      console.error('Failed to save base URL:', error);
+      toast.error(t('settings.providers.page.endpoint.baseURL.saveFailed'));
+    } finally {
+      setBaseURLBusyKey(null);
     }
   };
 
@@ -989,6 +1038,51 @@ export const ProvidersPage: React.FC = () => {
               >
                 {authBusyKey === `disconnect:${selectedProvider.id}` ? t('settings.providers.page.actions.disconnecting') : t('settings.providers.page.actions.disconnect')}
               </Button>
+            </div>
+          </section>
+        </div>
+
+        {/* Endpoint */}
+        <div className="mb-8">
+          <div className="mb-1 px-1">
+            <h3 className="typography-ui-header font-medium text-foreground">{t('settings.providers.page.endpoint.title')}</h3>
+          </div>
+
+          <section className="px-2 pb-2 pt-0">
+            <div className="py-1.5">
+              <label className="typography-ui-label text-foreground flex items-center gap-1.5">
+                {t('settings.providers.page.endpoint.baseURL.label')}
+                <Tooltip delayDuration={1000}>
+                  <TooltipTrigger asChild>
+                    <RiInformationLine className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help" />
+                  </TooltipTrigger>
+                  <TooltipContent sideOffset={8} className="max-w-xs">
+                    {t('settings.providers.page.endpoint.baseURL.tooltip')}
+                  </TooltipContent>
+                </Tooltip>
+              </label>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2 mt-1.5">
+                <Input
+                  type="text"
+                  value={baseURLInputs[selectedProvider.id] ?? ''}
+                  onChange={(event) =>
+                    setBaseURLInputs((prev) => ({
+                      ...prev,
+                      [selectedProvider.id]: event.target.value,
+                    }))
+                  }
+                  placeholder={t('settings.providers.page.endpoint.baseURL.placeholder')}
+                  className="flex-1 font-mono text-xs"
+                />
+                <Button
+                  size="xs"
+                  className="!font-normal shrink-0"
+                  onClick={() => handleSaveBaseURL(selectedProvider.id)}
+                  disabled={baseURLBusyKey === `baseURL:${selectedProvider.id}`}
+                >
+                  {baseURLBusyKey === `baseURL:${selectedProvider.id}` ? t('settings.providers.page.actions.saving') : t('settings.providers.page.endpoint.baseURL.save')}
+                </Button>
+              </div>
             </div>
           </section>
         </div>
