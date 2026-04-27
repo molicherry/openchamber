@@ -32,7 +32,25 @@ export function createGlobalMessageStreamWsBridge({
   };
 
   const replayEvents = (socket, requestedLastEventId) => {
-    for (const entry of globalHub.replayAfter(requestedLastEventId)) {
+    const { events, gap, oldestEventId } = globalHub.replayAfter(requestedLastEventId);
+
+    if (gap && oldestEventId) {
+      sendMessageStreamWsFrame(socket, {
+        type: 'event',
+        payload: {
+          type: 'openchamber:event-gap',
+          properties: {
+            lastEventId: requestedLastEventId,
+            oldestEventId,
+          },
+        },
+        directory: 'global',
+      });
+      removeClient(socket);
+      return;
+    }
+
+    for (const entry of events) {
       const sent = sendMessageStreamWsEvent(socket, entry.payload, {
         directory: entry.directory,
         eventId: entry.eventId,
