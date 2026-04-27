@@ -33,8 +33,9 @@ jobs:
         id: dockerfile
         run: |
           REF="${{ github.ref }}"
-          case "$REF" in
-            *FULL*) echo "file=./Dockerfile" >> $GITHUB_OUTPUT ;;
+          REF_LOWER=$(echo "$REF" | tr '[:upper:]' '[:lower:]')
+          case "$REF_LOWER" in
+            *full*) echo "file=./Dockerfile" >> $GITHUB_OUTPUT ;;
             *)      echo "file=./Dockerfile.runtime" >> $GITHUB_OUTPUT ;;
           esac
 
