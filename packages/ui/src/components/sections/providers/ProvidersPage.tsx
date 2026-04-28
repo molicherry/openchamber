@@ -595,6 +595,7 @@ export const ProvidersPage: React.FC = () => {
 
     try {
       const providerConfig: Record<string, unknown> = {
+        npm: '@ai-sdk/openai-compatible',
         name: customForm.providerName.trim() || providerId,
         models: {
           [modelId]: {
