@@ -20,7 +20,6 @@ import { copyTextToClipboard } from '@/lib/clipboard';
 import { openExternalUrl } from '@/lib/url';
 import type { ModelMetadata } from '@/types';
 import { useI18n } from '@/lib/i18n';
-import { opencodeClient } from '@/lib/opencode/client';
 
 const COMPACT_NUMBER_FORMATTER = new Intl.NumberFormat('en-US', {
   notation: 'compact',
@@ -538,20 +537,18 @@ export const ProvidersPage: React.FC = () => {
     setBaseURLBusyKey(busyKey);
 
     try {
-      await opencodeClient.updateConfigPartial((config) => {
-        const updated = { ...config };
-        if (!updated.provider) updated.provider = {};
-        if (!updated.provider[providerId]) updated.provider[providerId] = {};
-        if (!updated.provider[providerId].options) updated.provider[providerId].options = {};
-
-        if (value) {
-          updated.provider[providerId].options.baseURL = value;
-        } else {
-          delete updated.provider[providerId].options.baseURL;
-        }
-
-        return updated;
+      const response = await fetch(`/api/provider/${encodeURIComponent(providerId)}/config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          options: { baseURL: value || undefined },
+        }),
       });
+
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Failed to save base URL');
+      }
 
       toast.success(value
         ? t('settings.providers.page.endpoint.baseURL.saved')
@@ -597,44 +594,47 @@ export const ProvidersPage: React.FC = () => {
     setCustomBusy(true);
 
     try {
-      await opencodeClient.updateConfigPartial((config) => {
-        const updated = { ...config };
-        if (!updated.provider) updated.provider = {};
-
-        updated.provider[providerId] = {
-          name: customForm.providerName.trim() || providerId,
-          options: {},
-          models: {
-            [modelId]: {
-              id: modelId,
-              name: modelName,
-              limit: {
-                context: contextLimit,
-                output: outputLimit,
-              },
+      const providerConfig: Record<string, unknown> = {
+        name: customForm.providerName.trim() || providerId,
+        models: {
+          [modelId]: {
+            id: modelId,
+            name: modelName,
+            limit: {
+              context: contextLimit,
+              output: outputLimit,
             },
           },
-        };
+        },
+      };
 
-        const baseURL = customForm.baseURL.trim();
-        if (baseURL) {
-          updated.provider[providerId].options = { baseURL };
-        }
+      const baseURL = customForm.baseURL.trim();
+      if (baseURL) {
+        (providerConfig as Record<string, unknown>).options = { baseURL };
+      }
 
-        return updated;
+      const response = await fetch(`/api/provider/${encodeURIComponent(providerId)}/config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(providerConfig),
       });
+
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Failed to create provider config');
+      }
 
       const apiKey = customForm.apiKey.trim();
       if (apiKey) {
         try {
-          const response = await fetch(`/api/auth/${encodeURIComponent(providerId)}`, {
+          const keyResponse = await fetch(`/api/auth/${encodeURIComponent(providerId)}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ type: 'api', key: apiKey }),
           });
-          if (!response.ok) {
-            const payload = await response.json().catch(() => null);
-            console.warn('API key save warning:', payload?.error || 'unknown');
+          if (!keyResponse.ok) {
+            const keyPayload = await keyResponse.json().catch(() => null);
+            console.warn('API key save warning:', keyPayload?.error || 'unknown');
           }
         } catch (keyError) {
           console.warn('Failed to save API key for new provider:', keyError);

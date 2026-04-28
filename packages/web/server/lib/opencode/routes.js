@@ -14,6 +14,7 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
     resolveProjectDirectory,
     getProviderSources,
     removeProviderConfig,
+    writeProviderConfig,
     refreshOpenCodeAfterConfigChange,
   } = dependencies;
 
@@ -244,6 +245,50 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
     } catch (error) {
       console.error('Failed to disconnect provider:', error);
       return res.status(500).json({ error: error.message || 'Failed to disconnect provider' });
+    }
+  });
+
+  app.put('/api/provider/:providerId/config', async (req, res) => {
+    try {
+      const { providerId } = req.params;
+      if (!providerId) {
+        return res.status(400).json({ error: 'Provider ID is required' });
+      }
+
+      const providerConfig = req.body;
+      if (!providerConfig || typeof providerConfig !== 'object' || Array.isArray(providerConfig)) {
+        return res.status(400).json({ error: 'Provider config is required (object)' });
+      }
+
+      const headerDirectory = typeof req.get === 'function' ? req.get('x-opencode-directory') : null;
+      const queryDirectory = Array.isArray(req.query?.directory)
+        ? req.query.directory[0]
+        : req.query?.directory;
+      const requestedDirectory = headerDirectory || queryDirectory || null;
+
+      let directory = null;
+      const resolved = await resolveProjectDirectory(req);
+      if (resolved.directory) {
+        directory = resolved.directory;
+      } else if (requestedDirectory) {
+        return res.status(400).json({ error: resolved.error });
+      }
+
+      const targetPath = writeProviderConfig(providerId, providerConfig, directory);
+
+      await refreshOpenCodeAfterConfigChange(`provider ${providerId} config updated`);
+
+      return res.json({
+        success: true,
+        providerId,
+        path: targetPath,
+        requiresReload: true,
+        message: 'Provider config saved',
+        reloadDelayMs: clientReloadDelayMs,
+      });
+    } catch (error) {
+      console.error('Failed to write provider config:', error);
+      return res.status(500).json({ error: error.message || 'Failed to write provider config' });
     }
   });
 

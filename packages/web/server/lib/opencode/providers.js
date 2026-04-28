@@ -90,7 +90,42 @@ function removeProviderConfig(providerId, workingDirectory, scope = 'user') {
   return true;
 }
 
+function writeProviderConfig(providerId, providerConfigData, workingDirectory) {
+  if (!providerId || typeof providerId !== 'string') {
+    throw new Error('Provider ID is required');
+  }
+  if (!providerConfigData || typeof providerConfigData !== 'object') {
+    throw new Error('Provider config data is required');
+  }
+
+  const layers = readConfigLayers(workingDirectory);
+  const targetPath = layers.paths.userPath || CONFIG_FILE;
+  const targetConfig = getConfigForPath(layers, targetPath);
+
+  if (!targetConfig.provider || !isPlainObject(targetConfig.provider)) {
+    targetConfig.provider = {};
+  }
+
+  // Merge with existing provider config to avoid overwriting other fields
+  const existing = isPlainObject(targetConfig.provider[providerId])
+    ? { ...targetConfig.provider[providerId] }
+    : {};
+  const existingOptions = isPlainObject(existing.options) ? { ...existing.options } : {};
+  const newOptions = isPlainObject(providerConfigData.options) ? providerConfigData.options : {};
+
+  targetConfig.provider[providerId] = {
+    ...existing,
+    ...providerConfigData,
+    options: { ...existingOptions, ...newOptions },
+  };
+
+  writeConfig(targetConfig, targetPath);
+  console.log(`Wrote provider ${providerId} to config: ${targetPath}`);
+  return targetPath;
+}
+
 export {
   getProviderSources,
   removeProviderConfig,
+  writeProviderConfig,
 };
