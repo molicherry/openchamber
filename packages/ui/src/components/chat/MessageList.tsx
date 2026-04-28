@@ -1108,6 +1108,28 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
     }, [defaultActivityExpanded]);
 
 
+    // Structure-stable signature: only changes when message identity, role, finish,
+    // or part types change — NOT when part content (text deltas) change.
+    // This allows baseDisplayMessages to skip recomputation during streaming,
+    // where only the streaming message's text content grows but its structure is stable.
+    const messageStructureSignature = React.useMemo(() => {
+        let sig = '';
+        for (let i = 0; i < messages.length; i++) {
+            const m = messages[i];
+            const role = resolveMessageRole(m);
+            const finish = (m.info as { finish?: unknown }).finish ?? '';
+            sig += m.info.id + '|' + role + '|' + String(finish) + '|';
+            const parts = m.parts;
+            if (parts && parts.length > 0) {
+                for (let j = 0; j < parts.length; j++) {
+                    sig += (parts[j]?.type ?? '') + ',';
+                }
+            }
+            sig += ';';
+        }
+        return sig;
+    }, [messages]);
+
     const baseDisplayMessages = React.useMemo(() => streamPerfMeasure('ui.message_list.base_display_ms', () => {
         const seenIdsFromTail = new Set<string>();
         const dedupedMessages: ChatMessageEntry[] = [];
@@ -1154,7 +1176,7 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
         }
 
         return output;
-    }), [messages]);
+    }), [messageStructureSignature]);
 
     const historyContentRef = React.useRef<HTMLDivElement | null>(null);
     const pendingVirtualMeasureFrameRef = React.useRef<number | null>(null);
@@ -1355,7 +1377,7 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
         return messages
             .filter((message) => resolveMessageRole(message) === 'user')
             .map((message) => message.info.id);
-    }, [messages]);
+    }, [messageStructureSignature]);
 
     // Detect new user messages SYNCHRONOUSLY during render.
     // Must happen during render (not in useEffect) so that ToolRevealOnMount
