@@ -33,9 +33,8 @@ jobs:
         id: dockerfile
         run: |
           REF="${{ github.ref }}"
-          REF_LOWER=$(echo "$REF" | tr '[:upper:]' '[:lower:]')
-          case "$REF_LOWER" in
-            *full*) echo "file=./Dockerfile" >> $GITHUB_OUTPUT ;;
+          case "$REF" in
+            *FULL*) echo "file=./Dockerfile" >> $GITHUB_OUTPUT ;;
             *)      echo "file=./Dockerfile.runtime" >> $GITHUB_OUTPUT ;;
           esac
 
@@ -52,7 +51,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Extract image metadata
+      - name: Extract full image metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -62,6 +61,18 @@ jobs:
             type=ref,event=branch
             type=ref,event=tag
 
+      - name: Extract web image metadata
+        id: meta-web
+        if: github.event_name == 'push'
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          flavor: |
+            latest=false
+            suffix=-web
+          tags: |
+            type=ref,event=tag
+
       - name: Log in to Docker Hub
         if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.push_image) }}
         uses: docker/login-action@v3
@@ -69,7 +80,7 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and publish image
+      - name: Build and publish full image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -81,9 +92,26 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Build and publish web image
+        if: github.event_name == 'push'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.web
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta-web.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
       - name: Print published tags
         if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.push_image) }}
         run: |
-          echo "Image: $IMAGE_NAME"
-          echo "Tags:"
+          echo "Full image: $IMAGE_NAME"
           echo "${{ steps.meta.outputs.tags }}"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo ""
+            echo "Web image: $IMAGE_NAME"
+            echo "${{ steps.meta-web.outputs.tags }}"
+          fi
