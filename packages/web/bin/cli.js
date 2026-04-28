@@ -2834,7 +2834,8 @@ const commands = {
       }
     }
 
-    const opencodeBinary = await checkOpenCodeCLI(emitNotice);
+    const skipOpenCodeStart = process.env.OPENCODE_SKIP_START === 'true' || process.env.OPENCHAMBER_SKIP_OPENCODE_START === 'true';
+    const opencodeBinary = skipOpenCodeStart ? null : await checkOpenCodeCLI(emitNotice);
     const serverPath = path.join(__dirname, '..', 'server', 'index.js');
     const preferredRuntime = getPreferredServerRuntime();
     const runtimeBin = preferredRuntime === 'bun' ? BUN_BIN : process.execPath;
@@ -2995,7 +2996,7 @@ const commands = {
       env: {
         ...process.env,
         OPENCHAMBER_PORT: String(targetPort),
-        OPENCODE_BINARY: opencodeBinary,
+        ...(opencodeBinary ? { OPENCODE_BINARY: opencodeBinary } : {}),
         ...(effectiveHost ? { OPENCHAMBER_HOST: effectiveHost } : {}),
         ...(effectiveUiPassword ? { OPENCHAMBER_UI_PASSWORD: effectiveUiPassword } : {}),
         ...(process.env.OPENCODE_SKIP_START ? { OPENCHAMBER_SKIP_OPENCODE_START: process.env.OPENCODE_SKIP_START } : {}),
