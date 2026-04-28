@@ -9,7 +9,7 @@ import {
 } from './protocol.js';
 import { createGlobalMessageStreamHub } from './global-hub.js';
 import { createGlobalMessageStreamWsBridge } from './global-ws-bridge.js';
-import { acceptDirectoryMessageStreamWsConnection } from './directory-ws-bridge.js';
+import { acceptDirectoryMessageStreamWsConnection, clearDirectoryHubs } from './directory-ws-bridge.js';
 import {
   DEFAULT_UPSTREAM_RECONNECT_DELAY_MS,
   DEFAULT_UPSTREAM_STALL_TIMEOUT_MS,
@@ -174,6 +174,7 @@ export function createMessageStreamWsRuntime({
       } catch {
       } finally {
         wsClients.clear();
+        clearDirectoryHubs();
       }
     },
   };

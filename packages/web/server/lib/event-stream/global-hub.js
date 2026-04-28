@@ -133,11 +133,16 @@ export function createGlobalMessageStreamHub({
     },
     replayAfter(eventId) {
       if (!eventId) {
-        return [];
+        return { events: [], gap: false };
       }
 
       const index = replay.findIndex((entry) => entry.eventId === eventId);
-      return index === -1 ? [] : replay.slice(index + 1);
+      if (index === -1) {
+        const oldest = replay.length > 0 ? replay[0].eventId : undefined;
+        return { events: [], gap: true, oldestEventId: oldest };
+      }
+
+      return { events: replay.slice(index + 1), gap: false };
     },
   };
 }

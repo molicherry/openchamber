@@ -25,6 +25,23 @@ function normalizeHeaders(headers) {
   return { ...headers };
 }
 
+function resolveStallTimeoutMs(stallTimeoutMs, getStallTimeoutMs) {
+  if (typeof getStallTimeoutMs === 'function') {
+    try {
+      const dynamic = getStallTimeoutMs();
+      if (typeof dynamic === 'number' && dynamic > 0) {
+        return dynamic;
+      }
+    } catch {
+      // Fall through to static default.
+    }
+  }
+  if (typeof stallTimeoutMs === 'number' && stallTimeoutMs > 0) {
+    return stallTimeoutMs;
+  }
+  return DEFAULT_UPSTREAM_STALL_TIMEOUT_MS;
+}
+
 export function createUpstreamSseReader({
   buildUrl,
   getHeaders = () => ({}),
@@ -33,6 +50,7 @@ export function createUpstreamSseReader({
   initialLastEventId = '',
   signal,
   stallTimeoutMs = DEFAULT_UPSTREAM_STALL_TIMEOUT_MS,
+  getStallTimeoutMs,
   reconnectDelayMs = DEFAULT_UPSTREAM_RECONNECT_DELAY_MS,
   onEvent,
   onConnect,
@@ -68,6 +86,8 @@ export function createUpstreamSseReader({
 
         let abortReason = null;
         let stallTimer = null;
+        const effectiveStallTimeout = resolveStallTimeoutMs(stallTimeoutMs, getStallTimeoutMs);
+
         const clearStallTimer = () => {
           if (stallTimer) {
             clearTimeout(stallTimer);
@@ -76,14 +96,14 @@ export function createUpstreamSseReader({
         };
         const resetStallTimer = () => {
           clearStallTimer();
-          if (stallTimeoutMs <= 0) {
+          if (effectiveStallTimeout <= 0) {
             return;
           }
 
           stallTimer = setTimeout(() => {
             abortReason = 'upstream_stalled';
             controller.abort();
-          }, stallTimeoutMs);
+          }, effectiveStallTimeout);
         };
 
         try {

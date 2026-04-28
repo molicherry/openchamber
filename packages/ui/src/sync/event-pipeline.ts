@@ -20,7 +20,9 @@ export type QueuedEvent = {
 export type FlushHandler = (events: QueuedEvent[]) => void
 
 const FLUSH_FRAME_MS = 33
+const FAST_FLUSH_FRAME_MS = 16
 const STREAM_YIELD_MS = 8
+const STREAMING_COOLDOWN_MS = 2000
 const DEFAULT_RECONNECT_DELAY_MS = 250
 const DEFAULT_HEARTBEAT_TIMEOUT_MS = 30_000
 const WS_FALLBACK_WINDOW_MS = 60_000
@@ -171,6 +173,7 @@ export function createEventPipeline(input: EventPipelineInput) {
   let disconnected = false
   let lastEventId: string | undefined
   let wsFallbackUntil = 0
+  let lastDeltaAt = 0
 
   const directories = new Map<string, DirectoryQueue>()
 
@@ -252,7 +255,9 @@ export function createEventPipeline(input: EventPipelineInput) {
     const d = getOrCreateDir(directory)
     if (d.timer) return
     const elapsed = Date.now() - d.last
-    d.timer = setTimeout(() => flushDir(directory), Math.max(0, FLUSH_FRAME_MS - elapsed))
+    const isStreaming = Date.now() - lastDeltaAt < STREAMING_COOLDOWN_MS
+    const frameMs = isStreaming ? FAST_FLUSH_FRAME_MS : FLUSH_FRAME_MS
+    d.timer = setTimeout(() => flushDir(directory), Math.max(0, frameMs - elapsed))
   }
 
   const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
@@ -318,6 +323,9 @@ export function createEventPipeline(input: EventPipelineInput) {
     }
 
     d.queue.push(normalizedPayload)
+    if (normalizedPayload.type === "message.part.delta") {
+      lastDeltaAt = Date.now()
+    }
     scheduleDir(routedDirectory)
   }
 
