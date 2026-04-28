@@ -44,10 +44,40 @@ export const writeSseChunkWithBackpressure = async (res, value, signal) => {
   return !signal?.aborted && !res.writableEnded && !res.destroyed;
 };
 
+/**
+ * Tracks the trailing bytes of the SSE stream to detect event boundaries.
+ * Used by the heartbeat timer to ensure SSE comments (":heartbeat\n\n")
+ * are only injected between complete events — never inside a partial event.
+ */
+export const createSseBoundaryTracker = () => {
+  const decoder = new TextDecoder();
+  let tail = '';
+
+  const normalize = (value) => value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+  return {
+    observe(value) {
+      const text = typeof value === 'string'
+        ? value
+        : decoder.decode(value, { stream: true });
+      if (text.length > 0) {
+        tail = `${tail}${normalize(text)}`;
+        if (tail.length > 4096) {
+          tail = tail.slice(-4096);
+        }
+      }
+      return this.isAtBoundary();
+    },
+    isAtBoundary() {
+      return tail.length === 0 || tail.endsWith('\n\n');
+    },
+  };
+};
+
 // SSE proxy reliability constants
 const SSE_REPLAY_LIMIT = 64;
 const SSE_STALL_TIMEOUT_MS = 15_000;
-const SSE_KEEPALIVE_INTERVAL_MS = 15_000;
+const SSE_HEARTBEAT_INTERVAL_MS = 15_000;
 const SSE_RECONNECT_DELAY_MS = 250;
 const SSE_MAX_RECONNECT_ATTEMPTS = 5;
 
@@ -71,7 +101,8 @@ function getOrCreateReplayBuffer(upstreamPath) {
 /**
  * Parse a raw byte chunk into SSE event blocks.
  * Returns an array of { raw, eventId } for each complete SSE event found.
- * Incomplete trailing data is returned separately as `remainder`.
+ * Incomplete trailing data is returned separately as `remainder` and must be
+ * re-fed on the next call to preserve cross-chunk events.
  */
 function parseSseChunk(buffer, remainder) {
   const text = buffer instanceof Uint8Array
@@ -203,11 +234,13 @@ export const registerOpenCodeProxy = (app, deps) => {
 
   /**
    * Forward an SSE stream from OpenCode to the browser with:
-   * - Stall detection (15s timeout)
-   * - Event ID tracking and replay buffer
-   * - Last-Event-ID replay on reconnect
-   * - Keepalive comments for intermediate proxy compatibility
-   * - Reconnect with backoff on transient failures
+   * - Last-Event-ID replay on reconnect (events buffered server-side)
+   * - Stall detection (15s timeout) with automatic reconnection
+   * - Boundary-aware heartbeat comments (":heartbeat") to keep intermediate
+   *   proxies (nginx, CDN, etc.) from timing out
+   * - Serialized write queue to prevent heartbeat/data interleaving
+   * - Reconnect with backoff on transient failures (up to 5 attempts)
+   * - ECONNREFUSED-aware restart handling with Retry-After
    */
   const forwardSseRequest = async (req, res) => {
     const requestUrl = typeof req.originalUrl === 'string' && req.originalUrl.length > 0
@@ -248,13 +281,12 @@ export const registerOpenCodeProxy = (app, deps) => {
       const closeUpstream = () => abortController.abort();
       let upstream = null;
       let reader = null;
+      let heartbeatTimer = null;
+      let writeQueue = Promise.resolve(true);
+      const sseBoundary = createSseBoundaryTracker();
       let headersSent = attemptCount === 0 && !requestedLastEventId
         ? false
         : res.headersSent;
-
-      if (headersSent) {
-        // Already sent headers in a prior attempt — don't re-send.
-      }
 
       if (attemptCount > 0) {
         await new Promise((resolve) => setTimeout(resolve, SSE_RECONNECT_DELAY_MS));
@@ -314,19 +346,34 @@ export const registerOpenCodeProxy = (app, deps) => {
 
         reader = upstream.body.getReader();
 
+        /**
+         * Serialized write helper. All SSE writes (data and heartbeats) go
+         * through this queue to prevent interleaving from concurrent timers.
+         */
+        const enqueueSseWrite = (value) => {
+          writeQueue = writeQueue
+            .catch(() => false)
+            .then((canContinue) => {
+              if (!canContinue) {
+                return false;
+              }
+              return writeSseChunkWithBackpressure(res, value, abortController.signal);
+            });
+          return writeQueue;
+        };
+
         // Stall detection: if upstream produces no data for SSE_STALL_TIMEOUT_MS,
-        // abort and reconnect. Keepalive comments prevent idle-timeout disconnects
-        // from intermediate proxies (nginx, CDN, etc.).
+        // abort and reconnect.
         let stallTimer = null;
-        let keepaliveTimer = null;
+
         const clearTimers = () => {
           if (stallTimer) {
             clearTimeout(stallTimer);
             stallTimer = null;
           }
-          if (keepaliveTimer) {
-            clearTimeout(keepaliveTimer);
-            keepaliveTimer = null;
+          if (heartbeatTimer) {
+            clearTimeout(heartbeatTimer);
+            heartbeatTimer = null;
           }
         };
 
@@ -337,20 +384,29 @@ export const registerOpenCodeProxy = (app, deps) => {
           }, SSE_STALL_TIMEOUT_MS);
         };
 
-        const resetKeepaliveTimer = () => {
-          if (keepaliveTimer) clearTimeout(keepaliveTimer);
-          keepaliveTimer = setTimeout(async () => {
-            if (abortController.signal.aborted) return;
-            const keepalive = Buffer.from(': keepalive\n\n', 'utf-8');
-            await writeSseChunkWithBackpressure(res, keepalive, abortController.signal);
-            if (!abortController.signal.aborted) {
-              resetKeepaliveTimer();
+        // Heartbeat: boundary-aware keep-alive comments for intermediate proxies.
+        // Resets on each data chunk so it only fires during idle periods.
+        // Boundary check ensures ":heartbeat\n\n" is never injected inside a
+        // partial SSE event — it always lands between complete events.
+        const scheduleHeartbeat = () => {
+          if (heartbeatTimer) clearTimeout(heartbeatTimer);
+          heartbeatTimer = setTimeout(async () => {
+            if (abortController.signal.aborted || res.writableEnded || res.destroyed) {
+              return;
             }
-          }, SSE_KEEPALIVE_INTERVAL_MS);
+            if (!sseBoundary.isAtBoundary()) {
+              scheduleHeartbeat();
+              return;
+            }
+            const canContinue = await enqueueSseWrite(':heartbeat\n\n');
+            if (canContinue && !abortController.signal.aborted) {
+              scheduleHeartbeat();
+            }
+          }, SSE_HEARTBEAT_INTERVAL_MS);
         };
 
         resetStallTimer();
-        resetKeepaliveTimer();
+        scheduleHeartbeat();
 
         let textRemainder = '';
         while (!abortController.signal.aborted) {
@@ -360,12 +416,15 @@ export const registerOpenCodeProxy = (app, deps) => {
           }
 
           resetStallTimer();
-          resetKeepaliveTimer();
+          scheduleHeartbeat();
 
           if (value && value.length > 0) {
-            // Parse SSE blocks from the chunk for event ID tracking.
-            const { events } = parseSseChunk(value, textRemainder);
-            textRemainder = ''; // consumed by parseSseChunk
+            // Track SSE boundary state for heartbeat safety.
+            sseBoundary.observe(value);
+
+            // Parse SSE blocks from the chunk for event ID tracking and replay.
+            const { events, remainder } = parseSseChunk(value, textRemainder);
+            textRemainder = remainder;
 
             for (const event of events) {
               if (event.eventId) {
@@ -378,7 +437,7 @@ export const registerOpenCodeProxy = (app, deps) => {
               }
             }
 
-            const canContinue = await writeSseChunkWithBackpressure(res, value, abortController.signal);
+            const canContinue = await enqueueSseWrite(value);
             if (!canContinue) {
               break;
             }
@@ -390,7 +449,7 @@ export const registerOpenCodeProxy = (app, deps) => {
         return; // Normal stream completion — don't retry.
 
       } catch (error) {
-        clearTimers && clearTimers();
+        clearTimers();
         if (isAbortError(error)) {
           // Stall timeout or client disconnect — retry if client still connected.
           if (res.writableEnded || res.destroyed) {
