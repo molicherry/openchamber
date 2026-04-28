@@ -169,6 +169,18 @@ export const ProvidersPage: React.FC = () => {
   const [showAuthPanel, setShowAuthPanel] = React.useState(false);
   const [baseURLInputs, setBaseURLInputs] = React.useState<Record<string, string>>({});
   const [baseURLBusyKey, setBaseURLBusyKey] = React.useState<string | null>(null);
+  const [addProviderMode, setAddProviderMode] = React.useState<'builtin' | 'custom'>('builtin');
+  const [customForm, setCustomForm] = React.useState({
+    providerId: '',
+    providerName: '',
+    baseURL: '',
+    apiKey: '',
+    modelId: '',
+    modelName: '',
+    contextLimit: '',
+    outputLimit: '',
+  });
+  const [customBusy, setCustomBusy] = React.useState(false);
 
   React.useEffect(() => {
     if (!selectedProviderId && providers.length > 0) {
@@ -554,6 +566,102 @@ export const ProvidersPage: React.FC = () => {
     }
   };
 
+  const handleCreateCustomProvider = async () => {
+    const providerId = customForm.providerId.trim();
+    const modelId = customForm.modelId.trim();
+    const modelName = customForm.modelName.trim();
+    const contextLimit = parseInt(customForm.contextLimit, 10);
+    const outputLimit = parseInt(customForm.outputLimit, 10);
+
+    if (!providerId) {
+      toast.error(t('settings.providers.page.toast.customProviderIdRequired'));
+      return;
+    }
+    if (!modelId) {
+      toast.error(t('settings.providers.page.toast.customModelIdRequired'));
+      return;
+    }
+    if (!modelName) {
+      toast.error(t('settings.providers.page.toast.customModelNameRequired'));
+      return;
+    }
+    if (!contextLimit || contextLimit <= 0) {
+      toast.error(t('settings.providers.page.toast.customContextLimitInvalid'));
+      return;
+    }
+    if (!outputLimit || outputLimit <= 0) {
+      toast.error(t('settings.providers.page.toast.customOutputLimitInvalid'));
+      return;
+    }
+
+    setCustomBusy(true);
+
+    try {
+      await opencodeClient.updateConfigPartial((config) => {
+        const updated = { ...config };
+        if (!updated.provider) updated.provider = {};
+
+        updated.provider[providerId] = {
+          name: customForm.providerName.trim() || providerId,
+          options: {},
+          models: {
+            [modelId]: {
+              id: modelId,
+              name: modelName,
+              limit: {
+                context: contextLimit,
+                output: outputLimit,
+              },
+            },
+          },
+        };
+
+        const baseURL = customForm.baseURL.trim();
+        if (baseURL) {
+          updated.provider[providerId].options = { baseURL };
+        }
+
+        return updated;
+      });
+
+      const apiKey = customForm.apiKey.trim();
+      if (apiKey) {
+        try {
+          const response = await fetch(`/api/auth/${encodeURIComponent(providerId)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'api', key: apiKey }),
+          });
+          if (!response.ok) {
+            const payload = await response.json().catch(() => null);
+            console.warn('API key save warning:', payload?.error || 'unknown');
+          }
+        } catch (keyError) {
+          console.warn('Failed to save API key for new provider:', keyError);
+        }
+      }
+
+      toast.success(t('settings.providers.page.toast.customProviderCreated'));
+      setCustomForm({
+        providerId: '',
+        providerName: '',
+        baseURL: '',
+        apiKey: '',
+        modelId: '',
+        modelName: '',
+        contextLimit: '',
+        outputLimit: '',
+      });
+      setAddProviderMode('builtin');
+      await reloadOpenCodeConfiguration({ scopes: ["providers"], mode: "active" });
+    } catch (error) {
+      console.error('Failed to create custom provider:', error);
+      toast.error(t('settings.providers.page.toast.customProviderCreateFailed'));
+    } finally {
+      setCustomBusy(false);
+    }
+  };
+
   const isAddMode = selectedProviderId === ADD_PROVIDER_ID;
 
   if (!isAddMode && providers.length === 0) {
@@ -576,6 +684,36 @@ export const ProvidersPage: React.FC = () => {
             <h1 className="typography-ui-header font-semibold text-foreground">{t('settings.providers.page.connect.title')}</h1>
           </div>
 
+          {/* Mode Toggle */}
+          <div className="mb-6 flex gap-0.5 rounded-lg bg-[var(--surface-muted)] p-0.5 w-fit">
+            <button
+              type="button"
+              onClick={() => { setAddProviderMode('builtin'); setCandidateProviderId(''); }}
+              className={cn(
+                "rounded-md px-3 py-1.5 typography-ui-label transition-colors",
+                addProviderMode === 'builtin'
+                  ? "bg-[var(--surface-elevated)] text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {t('settings.providers.page.connect.modeBuiltin')}
+            </button>
+            <button
+              type="button"
+              onClick={() => setAddProviderMode('custom')}
+              className={cn(
+                "rounded-md px-3 py-1.5 typography-ui-label transition-colors",
+                addProviderMode === 'custom'
+                  ? "bg-[var(--surface-elevated)] text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {t('settings.providers.page.connect.modeCustom')}
+            </button>
+          </div>
+
+          {addProviderMode === 'builtin' ? (
+          <>
           <div className="mb-8">
             <div className="mb-1 px-1">
               <h2 className="typography-ui-header font-medium text-foreground">{t('settings.providers.page.connect.selectProviderTitle')}</h2>
@@ -811,6 +949,157 @@ export const ProvidersPage: React.FC = () => {
                 </section>
               )}
             </div>
+          )}
+          </>
+          ) : (
+          <div className="mb-8">
+            <section className="px-2 pb-2 pt-0 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="py-1.5">
+                  <label className="typography-ui-label text-foreground flex items-center gap-1.5">
+                    {t('settings.providers.page.connect.customProviderId')}
+                    <Tooltip delayDuration={1000}>
+                      <TooltipTrigger asChild>
+                        <RiInformationLine className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent sideOffset={8} className="max-w-xs">
+                        {t('settings.providers.page.connect.customProviderIdTooltip')}
+                      </TooltipContent>
+                    </Tooltip>
+                  </label>
+                  <Input
+                    type="text"
+                    value={customForm.providerId}
+                    onChange={(e) => setCustomForm((prev) => ({ ...prev, providerId: e.target.value }))}
+                    placeholder={t('settings.providers.page.connect.customProviderIdPlaceholder')}
+                    className="mt-1.5 font-mono text-xs"
+                  />
+                </div>
+                <div className="py-1.5">
+                  <label className="typography-ui-label text-foreground">
+                    {t('settings.providers.page.connect.customProviderName')}
+                  </label>
+                  <Input
+                    type="text"
+                    value={customForm.providerName}
+                    onChange={(e) => setCustomForm((prev) => ({ ...prev, providerName: e.target.value }))}
+                    placeholder={t('settings.providers.page.connect.customProviderNamePlaceholder')}
+                    className="mt-1.5 text-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="py-1.5">
+                <label className="typography-ui-label text-foreground flex items-center gap-1.5">
+                  {t('settings.providers.page.endpoint.baseURL.label')}
+                  <Tooltip delayDuration={1000}>
+                    <TooltipTrigger asChild>
+                      <RiInformationLine className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help" />
+                    </TooltipTrigger>
+                    <TooltipContent sideOffset={8} className="max-w-xs">
+                      {t('settings.providers.page.connect.customBaseURLTooltip')}
+                    </TooltipContent>
+                  </Tooltip>
+                </label>
+                <Input
+                  type="text"
+                  value={customForm.baseURL}
+                  onChange={(e) => setCustomForm((prev) => ({ ...prev, baseURL: e.target.value }))}
+                  placeholder={t('settings.providers.page.connect.customBaseURLPlaceholder')}
+                  className="mt-1.5 font-mono text-xs"
+                />
+              </div>
+
+              <div className="py-1.5">
+                <label className="typography-ui-label text-foreground flex items-center gap-1.5">
+                  {t('settings.providers.page.connect.customApiKeyLabel')}
+                  <Tooltip delayDuration={1000}>
+                    <TooltipTrigger asChild>
+                      <RiInformationLine className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help" />
+                    </TooltipTrigger>
+                    <TooltipContent sideOffset={8} className="max-w-xs">
+                      {t('settings.providers.page.auth.apiKeyTooltip')}
+                    </TooltipContent>
+                  </Tooltip>
+                </label>
+                <Input
+                  type="password"
+                  value={customForm.apiKey}
+                  onChange={(e) => setCustomForm((prev) => ({ ...prev, apiKey: e.target.value }))}
+                  placeholder={t('settings.providers.page.auth.apiKeyPlaceholder')}
+                  className="mt-1.5 font-mono text-xs"
+                />
+              </div>
+
+              <div className="border-t border-[var(--surface-subtle)] pt-3">
+                <h3 className="typography-ui-label font-medium text-foreground mb-3">
+                  {t('settings.providers.page.models.title')}
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="py-1.5">
+                    <label className="typography-ui-label text-foreground">
+                      {t('settings.providers.page.connect.customModelId')}
+                    </label>
+                    <Input
+                      type="text"
+                      value={customForm.modelId}
+                      onChange={(e) => setCustomForm((prev) => ({ ...prev, modelId: e.target.value }))}
+                      placeholder={t('settings.providers.page.connect.customModelIdPlaceholder')}
+                      className="mt-1.5 font-mono text-xs"
+                    />
+                  </div>
+                  <div className="py-1.5">
+                    <label className="typography-ui-label text-foreground">
+                      {t('settings.providers.page.connect.customModelName')}
+                    </label>
+                    <Input
+                      type="text"
+                      value={customForm.modelName}
+                      onChange={(e) => setCustomForm((prev) => ({ ...prev, modelName: e.target.value }))}
+                      placeholder={t('settings.providers.page.connect.customModelNamePlaceholder')}
+                      className="mt-1.5 text-xs"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2">
+                  <div className="py-1.5">
+                    <label className="typography-ui-label text-foreground">
+                      {t('settings.providers.page.connect.customContextLimit')}
+                    </label>
+                    <Input
+                      type="number"
+                      value={customForm.contextLimit}
+                      onChange={(e) => setCustomForm((prev) => ({ ...prev, contextLimit: e.target.value }))}
+                      placeholder={t('settings.providers.page.connect.customContextLimitPlaceholder')}
+                      className="mt-1.5 font-mono text-xs"
+                    />
+                  </div>
+                  <div className="py-1.5">
+                    <label className="typography-ui-label text-foreground">
+                      {t('settings.providers.page.connect.customOutputLimit')}
+                    </label>
+                    <Input
+                      type="number"
+                      value={customForm.outputLimit}
+                      onChange={(e) => setCustomForm((prev) => ({ ...prev, outputLimit: e.target.value }))}
+                      placeholder={t('settings.providers.page.connect.customOutputLimitPlaceholder')}
+                      className="mt-1.5 font-mono text-xs"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-2">
+                <Button
+                  size="sm"
+                  onClick={handleCreateCustomProvider}
+                  disabled={customBusy}
+                >
+                  {customBusy ? t('settings.providers.page.connect.customCreating') : t('settings.providers.page.connect.customCreate')}
+                </Button>
+              </div>
+            </section>
+          </div>
           )}
         </div>
       </ScrollableOverlay>
