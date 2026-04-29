@@ -99,25 +99,75 @@ function writeProviderConfig(providerId, providerConfigData, workingDirectory) {
   }
 
   const layers = readConfigLayers(workingDirectory);
-  const targetPath = layers.paths.userPath || CONFIG_FILE;
-  const targetConfig = getConfigForPath(layers, targetPath);
+  const customProviders = isPlainObject(layers.customConfig?.provider) ? layers.customConfig.provider : {};
+  const customProvidersAlias = isPlainObject(layers.customConfig?.providers) ? layers.customConfig.providers : {};
+  const projectProviders = isPlainObject(layers.projectConfig?.provider) ? layers.projectConfig.provider : {};
+  const projectProvidersAlias = isPlainObject(layers.projectConfig?.providers) ? layers.projectConfig.providers : {};
+  const userProviders = isPlainObject(layers.userConfig?.provider) ? layers.userConfig.provider : {};
+  const userProvidersAlias = isPlainObject(layers.userConfig?.providers) ? layers.userConfig.providers : {};
 
-  if (!targetConfig.provider || !isPlainObject(targetConfig.provider)) {
-    targetConfig.provider = {};
+  let targetPath = layers.paths.userPath || CONFIG_FILE;
+  let targetSection = 'provider';
+
+  if (Object.prototype.hasOwnProperty.call(customProviders, providerId)) {
+    targetPath = layers.paths.customPath || targetPath;
+    targetSection = 'provider';
+  } else if (Object.prototype.hasOwnProperty.call(customProvidersAlias, providerId)) {
+    targetPath = layers.paths.customPath || targetPath;
+    targetSection = 'providers';
+  } else if (Object.prototype.hasOwnProperty.call(projectProviders, providerId)) {
+    targetPath = layers.paths.projectPath || targetPath;
+    targetSection = 'provider';
+  } else if (Object.prototype.hasOwnProperty.call(projectProvidersAlias, providerId)) {
+    targetPath = layers.paths.projectPath || targetPath;
+    targetSection = 'providers';
+  } else if (Object.prototype.hasOwnProperty.call(userProvidersAlias, providerId)) {
+    targetSection = 'providers';
+  } else if (Object.prototype.hasOwnProperty.call(userProviders, providerId)) {
+    targetSection = 'provider';
+  }
+
+  const targetConfig = getConfigForPath(layers, targetPath);
+  const targetProviders = isPlainObject(targetConfig[targetSection]) ? targetConfig[targetSection] : {};
+
+  if (!targetConfig[targetSection] || !isPlainObject(targetConfig[targetSection])) {
+    targetConfig[targetSection] = {};
   }
 
   // Merge with existing provider config to avoid overwriting other fields
-  const existing = isPlainObject(targetConfig.provider[providerId])
-    ? { ...targetConfig.provider[providerId] }
+  const existing = isPlainObject(targetProviders[providerId])
+    ? { ...targetProviders[providerId] }
     : {};
+  const hasIncomingOptions = Object.prototype.hasOwnProperty.call(providerConfigData, 'options');
+  const incomingOptions = providerConfigData.options;
+  const shouldClearAllOptions = hasIncomingOptions && incomingOptions === null;
   const existingOptions = isPlainObject(existing.options) ? { ...existing.options } : {};
-  const newOptions = isPlainObject(providerConfigData.options) ? providerConfigData.options : {};
+  const newOptions = isPlainObject(incomingOptions) ? incomingOptions : {};
 
-  targetConfig.provider[providerId] = {
+  const mergedOptions = shouldClearAllOptions
+    ? {}
+    : { ...existingOptions, ...newOptions };
+
+  for (const [key, value] of Object.entries(newOptions)) {
+    if (value === null) {
+      delete mergedOptions[key];
+    }
+  }
+
+  const nextProviderConfig = {
     ...existing,
     ...providerConfigData,
-    options: { ...existingOptions, ...newOptions },
   };
+
+  if (hasIncomingOptions) {
+    if (Object.keys(mergedOptions).length > 0) {
+      nextProviderConfig.options = mergedOptions;
+    } else {
+      delete nextProviderConfig.options;
+    }
+  }
+
+  targetConfig[targetSection][providerId] = nextProviderConfig;
 
   writeConfig(targetConfig, targetPath);
   console.log(`Wrote provider ${providerId} to config: ${targetPath}`);

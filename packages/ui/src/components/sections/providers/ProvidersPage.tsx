@@ -541,7 +541,7 @@ export const ProvidersPage: React.FC = () => {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          options: { baseURL: value || undefined },
+          options: { baseURL: value || null },
         }),
       });
 
