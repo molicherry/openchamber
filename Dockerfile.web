@@ -1,0 +1,74 @@
+# syntax=docker/dockerfile:1
+# Web-only image: serves OpenChamber UI without embedded OpenCode.
+# Requires an external OpenCode instance (set OPENCODE_HOST or OPENCODE_PORT).
+
+ARG NODE_OPTIONS="--max-old-space-size=2048"
+
+FROM oven/bun:1.3.13 AS build
+WORKDIR /app
+
+COPY package.json bun.lock ./
+COPY packages/ui/package.json ./packages/ui/
+COPY packages/web/package.json ./packages/web/
+COPY packages/desktop/package.json ./packages/desktop/
+COPY packages/vscode/package.json ./packages/vscode/
+
+RUN bun install --ignore-scripts
+
+COPY . .
+
+RUN bun run build:web
+
+# Prune devDependencies in-place to avoid a second bun install with lockfile conflicts
+RUN cp package.json package.json.bak && \
+    bun install --production --ignore-scripts && \
+    mv package.json.bak package.json
+
+ENV NODE_OPTIONS="--max-old-space-size=2048"
+
+FROM oven/bun:1.3.13 AS runtime
+WORKDIR /home/openchamber
+
+# Slimmer system packages: no gh, no python3 (web-only doesn't run OpenCode)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  bash \
+  ca-certificates \
+  git \
+  nodejs \
+  npm \
+  openssh-client \
+  && rm -rf /var/lib/apt/lists/*
+
+# Replace the base image's 'bun' user (UID 1000) with 'openchamber'
+# so mounted volumes with 1000:1000 ownership work correctly.
+RUN userdel bun \
+  && groupadd -g 1000 openchamber \
+  && useradd -u 1000 -g 1000 -m -s /bin/bash openchamber \
+  && chown -R openchamber:openchamber /home/openchamber
+
+USER openchamber
+
+ENV NODE_ENV=production
+ENV NPM_CONFIG_PREFIX=/home/openchamber/.npm-global
+ENV PATH=${NPM_CONFIG_PREFIX}/bin:${PATH}
+
+RUN npm config set prefix /home/openchamber/.npm-global && mkdir -p /home/openchamber/.npm-global && \
+  mkdir -p /home/openchamber/.local /home/openchamber/.config /home/openchamber/.ssh
+
+# Web-only: do NOT install opencode-ai. User must connect to an external OpenCode instance.
+ENV OPENCODE_SKIP_START=true
+
+COPY scripts/docker-entrypoint.sh /home/openchamber/openchamber-entrypoint.sh
+
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/packages/web/node_modules ./packages/web/node_modules
+
+COPY --from=build /app/package.json ./package.json
+COPY --from=build /app/packages/web/package.json ./packages/web/package.json
+COPY --from=build /app/packages/web/bin ./packages/web/bin
+COPY --from=build /app/packages/web/server ./packages/web/server
+COPY --from=build /app/packages/web/dist ./packages/web/dist
+
+EXPOSE 3000
+
+ENTRYPOINT ["sh", "/home/openchamber/openchamber-entrypoint.sh"]
